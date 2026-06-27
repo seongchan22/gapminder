@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gapminder 데이터 분석</title>
+<style>
+  :root { --accent:#2780e3; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Malgun Gothic","Segoe UI",sans-serif;
+         background:#f6f8fa; color:#1f2328; line-height:1.6; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 20px; }
+  header h1 { font-size:2rem; margin:0 0 8px; }
+  header p { color:#57606a; margin:0 0 32px; }
+  .grid { display:grid; gap:16px; grid-template-columns:1fr; }
+  @media(min-width:640px){ .grid{ grid-template-columns:1fr 1fr; } }
+  a.card { display:block; text-decoration:none; color:inherit;
+           background:#fff; border:1px solid #d0d7de; border-radius:12px;
+           padding:20px 22px; transition:.15s; }
+  a.card:hover { border-color:var(--accent); box-shadow:0 4px 14px rgba(0,0,0,.08);
+                 transform:translateY(-2px); }
+  a.card.full { grid-column:1/-1; }
+  .card h2 { margin:0 0 6px; font-size:1.15rem; color:var(--accent); }
+  .card p { margin:0; color:#57606a; font-size:.92rem; }
+  footer { margin-top:40px; font-size:.85rem; color:#8b949e; text-align:center; }
+  footer a { color:#57606a; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>📊 Gapminder 데이터 분석</h1>
+      <p>142개국 · 1952–2007 · 기대수명 · 1인당 GDP · 인구 — Quarto로 작성한 분석 모음</p>
+    </header>
+    <div class="grid">
+      <a class="card full" href="eda_dashboard.html">
+        <h2>🖥️ EDA 대시보드</h2>
+        <p>기대수명 중심 핵심 지표와 추세·불평등·소득-수명 관계를 한눈에 보는 인터랙티브 대시보드</p>
+      </a>
+      <a class="card" href="eda_report.html">
+        <h2>📈 EDA 상세 보고서</h2>
+        <p>분포 진단·불평등 추세·심슨역설 점검·회귀·β-수렴·역행 사례까지 다룬 심층 분석</p>
+      </a>
+      <a class="card" href="data_quality_report.html">
+        <h2>✅ 데이터 품질 보고서</h2>
+        <p>결측·중복·이상치·패널 균형성 등 10단계 품질 점검 결과</p>
+      </a>
+    </div>
+    <footer>
+      소스 코드: <a href="https://github.com/seongchan22/gapminder">github.com/seongchan22/gapminder</a>
+    </footer>
+  </div>
+</body>
+</html>
