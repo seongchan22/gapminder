@@ -1,0 +1,283 @@
+---
+title: "Gapminder 탐색적 데이터 분석(EDA) 보고서"
+subtitle: "분포 · 불평등 · 변화 동학까지 본 심층 EDA"
+author: "Data Analysis"
+date: "2026-06-27"
+lang: ko
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-title: "목차"
+    code-fold: true
+    code-summary: "코드 보기"
+    fig-width: 8
+    fig-height: 5
+    df-print: kable
+    embed-resources: true
+---
+
+```{r setup}
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+# 보조 통계 함수 (외부 패키지 없이)
+skewness <- function(x) {
+  x <- x[!is.na(x)]; m <- mean(x); s <- sqrt(mean((x - m)^2))
+  mean((x - m)^3) / s^3
+}
+gini <- function(x) {
+  x <- sort(x[!is.na(x) & x >= 0]); n <- length(x)
+  if (n == 0) return(NA)
+  2 * sum(x * seq_len(n)) / (n * sum(x)) - (n + 1) / n
+}
+cv <- function(x) sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+
+df <- read.csv("data/gapminder.csv", stringsAsFactors = FALSE)
+first <- min(df$year); latest <- max(df$year)
+mytheme <- theme_minimal(base_size = 12)
+```
+
+## 요약 (Executive Summary)
+
+본 보고서는 단순 평균 추세를 넘어 **분포, 불평등(수렴·발산), 변화 동학, 역행 사례**까지
+비판적으로 분석한다. 핵심 결론은 다음과 같다.
+
+- 지난 55년간 세계 기대수명은 약 **+20년**, 1인당 소득은 약 **3배** 증가했다.
+- 그러나 "평균 상승"은 분포 변화를 가린다. 기대수명 격차는 **단조 수렴이 아니라 U자형**
+  (1980년대까지 수렴 → HIV/AIDS 시기 재확대)이다.
+- 소득과 수명은 **로그-선형** 관계이며, 대륙(지역 요인) 통제 후에도 소득 효과는 유지된다.
+- **르완다 대학살·사하라이남 HIV/AIDS** 등 평균 추세에 가려진 급격한 역행 사례가 존재한다.
+
+> **데이터 한계**: 142개국만 포함(소국·분쟁국 누락 가능), 5년 간격(연중 급변 미포착),
+> 2007년까지(최근 동향 미반영), `gdpPercap`은 물가/PPP 기준 차이에 주의.
+
+## 1. 데이터 개요
+
+```{r overview}
+data.frame(
+  항목 = c("관측치", "변수", "국가 수", "대륙 수", "연도 범위", "시점 수"),
+  값 = c(nrow(df), ncol(df), length(unique(df$country)),
+         length(unique(df$continent)),
+         paste0(first, " ~ ", latest), length(unique(df$year)))
+) |> kable()
+```
+
+## 2. 변수 분포 진단 — 왜 로그가 필요한가
+
+```{r dist-diagnostic}
+data.frame(
+  변수 = c("pop", "gdpPercap", "lifeExp", "log(gdpPercap)", "log(pop)"),
+  왜도_skewness = round(c(skewness(df$pop), skewness(df$gdpPercap),
+                          skewness(df$lifeExp), skewness(log(df$gdpPercap)),
+                          skewness(log(df$pop))), 3)
+) |> kable()
+```
+
+`pop`(왜도 8.3)과 `gdpPercap`(3.8)은 강한 우측 치우침을 보인다. 로그 변환 시 왜도가
+0 근처로 완화되어, **평균보다 중앙값이 대표값으로 적절**하고 **회귀에는 로그를 쓰는 것이 타당**하다.
+
+```{r dist-plot}
+#| fig-cap: "GDP per capita 분포 — 원본(우측 치우침) vs 로그"
+bind_rows(
+  data.frame(value = df$gdpPercap, scale = "raw"),
+  data.frame(value = log10(df$gdpPercap), scale = "log10")
+) |>
+  ggplot(aes(value)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "white") +
+  facet_wrap(~scale, scales = "free") +
+  labs(title = "Distribution of GDP per capita", x = "Value", y = "Count") + mytheme
+```
+
+## 3. 중심경향: 단순평균 vs 인구가중평균
+
+어떤 평균을 쓰느냐가 결론을 바꾼다.
+
+```{r mean-compare}
+sm <- mean(df$lifeExp[df$year == latest])
+wm <- with(df[df$year == latest, ], sum(lifeExp * pop) / sum(pop))
+data.frame(
+  지표 = c("국가 단순평균", "인구 가중평균", "차이"),
+  기대수명 = round(c(sm, wm, wm - sm), 2)
+) |> kable()
+```
+
+인구가 많은 국가(중국·인도 등)가 단순평균을 끌어내린다. 인구가중평균이 "실제 사람이 체감하는 수준"에 가깝다.
+
+## 4. 불평등 추세 — 세계는 수렴하는가 발산하는가 {#sec-inequality}
+
+가장 중요한 발견. **평균 상승에 가려진 분포 변화**를 본다.
+
+```{r inequality}
+ineq <- df |>
+  group_by(year) |>
+  summarise(
+    기대수명_SD = round(sd(lifeExp), 2),
+    P90_P10격차 = round(quantile(lifeExp, .9) - quantile(lifeExp, .1), 2),
+    소득_변이계수 = round(cv(gdpPercap), 3),
+    소득_Gini = round(gini(gdpPercap), 4),
+    .groups = "drop"
+  )
+kable(ineq)
+```
+
+```{r inequality-plot}
+#| fig-cap: "불평등 추세 — 기대수명 격차는 U자형, 소득 Gini는 완만한 완화"
+#| fig-height: 4.5
+df |>
+  group_by(year) |>
+  summarise(`Life expectancy SD (gap)` = sd(lifeExp),
+            `Income Gini` = gini(gdpPercap), .groups = "drop") |>
+  pivot_longer(-year) |>
+  ggplot(aes(year, value)) +
+  geom_line(linewidth = 1, color = "firebrick") + geom_point() +
+  facet_wrap(~name, scales = "free_y") +
+  labs(title = "Inequality over time", x = "Year", y = NULL) + mytheme
+```
+
+기대수명 격차(SD)는 1952~1987년 수렴했다가 **1987~2002년 다시 확대**되는 U자형이다.
+이는 사하라이남 HIV/AIDS 충격이 분포의 하단을 끌어내린 결과로, 단순 "전반적 향상"
+서술로는 포착되지 않는다.
+
+## 5. 관계 분해 — 심슨의 역설 점검
+
+pooled 상관 하나로 끝내지 않고 연도별·대륙별로 분해한다.
+
+```{r relationship}
+cat(sprintf("전체 pooled 상관 cor(lifeExp, log(gdp)) = %.3f\n",
+            cor(df$lifeExp, log(df$gdpPercap))))
+```
+
+```{r relationship-tables}
+by_year <- df |> group_by(year) |>
+  summarise(상관 = round(cor(lifeExp, log(gdpPercap)), 3), .groups = "drop")
+by_cont <- df |> group_by(continent) |>
+  summarise(상관 = round(cor(lifeExp, log(gdpPercap)), 3), .groups = "drop")
+kable(by_year, caption = "연도별 상관")
+kable(by_cont, caption = "대륙별 상관")
+```
+
+상관은 **모든 연도·대륙에서 양(+)으로 안정적**이므로 심슨의 역설(부호 반전)은 없다.
+다만 강도는 Africa(0.54)에서 Oceania(0.96)까지 큰 차이를 보인다.
+
+```{r relationship-by-year}
+#| fig-cap: "GDP-기대수명 관계는 시간이 지나며 위로 평행이동"
+#| fig-width: 10
+#| fig-height: 4.5
+df |> filter(year %in% c(1952, 1977, 2007)) |>
+  ggplot(aes(gdpPercap, lifeExp, color = continent)) +
+  geom_point(alpha = 0.6, size = 1.2) + scale_x_log10() +
+  facet_wrap(~year) +
+  labs(title = "Relationship shifts upward over time",
+       x = "GDP per capita (log)", y = "Life expectancy", color = "Continent") + mytheme
+```
+
+## 6. 회귀분석 — 효과 크기 정량화
+
+```{r regression}
+m1 <- lm(lifeExp ~ log(gdpPercap), data = df)
+m2 <- lm(lifeExp ~ log(gdpPercap) + continent, data = df)
+data.frame(
+  모델 = c("M1: lifeExp ~ log(gdp)", "M2: + continent"),
+  R2 = round(c(summary(m1)$r.squared, summary(m2)$r.squared), 3),
+  `log(gdp)_계수` = round(c(coef(m1)[["log(gdpPercap)"]],
+                            coef(m2)[["log(gdpPercap)"]]), 2)
+) |> kable()
+```
+
+소득이 e배(약 2.7배) 늘 때 기대수명은 약 **+8.4세**(M1)이다. 대륙 통제 후 계수가 6.4로
+줄고 설명력은 0.65→0.70으로 상승한다 → **소득 외 지역 요인(보건·제도)의 기여도 크다.**
+
+```{r gdp-vs-life}
+#| fig-cap: "2007년 GDP vs 기대수명 (버블=인구, 회귀선 포함)"
+df |> filter(year == latest) |>
+  ggplot(aes(gdpPercap, lifeExp)) +
+  geom_point(aes(size = pop, color = continent), alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.6) +
+  scale_x_log10() + scale_size(range = c(1, 15), guide = "none") +
+  labs(title = sprintf("GDP per capita vs Life expectancy (%d)", latest),
+       x = "GDP per capita (log)", y = "Life expectancy", color = "Continent") + mytheme
+```
+
+## 7. 변화 동학 — 성장률과 β-수렴
+
+```{r dynamics}
+wide <- df |>
+  filter(year %in% c(first, latest)) |>
+  select(country, continent, year, lifeExp, gdpPercap) |>
+  pivot_wider(names_from = year, values_from = c(lifeExp, gdpPercap))
+le0 <- paste0("lifeExp_", first);  le1 <- paste0("lifeExp_", latest)
+gd0 <- paste0("gdpPercap_", first); gd1 <- paste0("gdpPercap_", latest)
+wide <- wide |>
+  mutate(lifeExp_gain = .data[[le1]] - .data[[le0]],
+         gdp_cagr = (.data[[gd1]] / .data[[gd0]])^(1 / (latest - first)) - 1)
+```
+
+```{r dynamics-tables}
+wide |> arrange(desc(lifeExp_gain)) |>
+  transmute(country, continent, 기대수명증가 = round(lifeExp_gain, 1)) |> head(5) |>
+  kable(caption = "기대수명 증가 상위 5국")
+wide |> arrange(lifeExp_gain) |>
+  transmute(country, continent, 기대수명증가 = round(lifeExp_gain, 1)) |> head(5) |>
+  kable(caption = "기대수명 증가 하위 5국 (정체/역행)")
+wide |> arrange(desc(gdp_cagr)) |>
+  transmute(country, continent, GDP_CAGR_pct = round(gdp_cagr * 100, 2)) |> head(5) |>
+  kable(caption = "GDP 연평균성장률(CAGR) 상위 5국")
+```
+
+```{r beta-convergence}
+#| fig-cap: "β-수렴 — 출발선이 낮았던 국가일수록 더 많이 따라잡았다"
+beta <- cor(wide[[le0]], wide$lifeExp_gain)
+ggplot(wide, aes(.data[[le0]], lifeExp_gain, color = continent)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.6) +
+  labs(title = sprintf("Beta-convergence (r = %.3f)", beta),
+       x = sprintf("Life expectancy in %d", first),
+       y = sprintf("Gain by %d", latest), color = "Continent") + mytheme
+```
+
+`cor(1952 기대수명, 이후 증가량) = `r round(beta, 3)`` 로 음(-)이므로,
+뒤처진 국가가 더 빠르게 따라잡는 **β-수렴**이 확인된다.
+
+## 8. 역행 사례 — 평균이 가린 비극
+
+```{r reversals}
+df |>
+  arrange(country, year) |>
+  group_by(country) |>
+  mutate(d_life = lifeExp - lag(lifeExp),
+         기간 = paste0(lag(year), "→", year)) |>
+  ungroup() |>
+  filter(!is.na(d_life)) |>
+  arrange(d_life) |>
+  transmute(country, continent, 기간, 하락폭 = round(d_life, 1)) |>
+  head(8) |>
+  kable(caption = "5년 새 기대수명이 가장 크게 하락한 구간 TOP 8")
+```
+
+르완다(1987→1992, **-20.4세**, 대학살), 짐바브웨·레소토·스와질란드(HIV/AIDS),
+캄보디아(1972→1977, 크메르루주) 등 — 평균 추세로는 결코 보이지 않는 충격들이다.
+
+## 9. 핵심 인사이트 & 후속 분석
+
+**핵심 인사이트**
+
+1. 전반적 향상은 사실이나, **분포(불평등) 관점에서 보면 단조롭지 않다(U자형).**
+2. 소득-수명은 로그-선형이며, 지역 요인(보건·제도)도 소득만큼 중요하다.
+3. β-수렴이 존재하나, HIV/내전을 겪은 국가는 오히려 역행했다.
+4. "평균"과 "분포"를 함께 봐야 데이터의 진실에 접근할 수 있다.
+
+**후속 분석 제안**
+
+- 국가별 기대수명 성장 속도(연평균)와 수렴 클럽(convergence club) 식별
+- 산유국(고GDP–저수명) 등 회귀 잔차가 큰 이상치 사례 심층 분석
+- 최신 Gapminder 원자료(2007년 이후)로 확장하여 코로나·최근 동향 반영
+
+---
+
+*본 보고서는 `data/gapminder.csv`를 대상으로 Quarto로 작성되었으며, 모든 표·그림은
+문서 렌더링 시 코드에서 직접 생성된다(재현 가능).*

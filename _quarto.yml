@@ -1,0 +1,18 @@
+project:
+  type: default
+  output-dir: docs
+  # 모든 코드 청크를 프로젝트 루트 기준으로 실행 (data/ 경로 정상 해석)
+  execute-dir: project
+  render:
+    - eda_report.qmd
+    - eda_dashboard.qmd
+    - data_quality_report.md
+
+# 문서 공통 옵션
+lang: ko
+
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: auto

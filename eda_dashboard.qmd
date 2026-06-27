@@ -1,0 +1,191 @@
+---
+title: "gapminder EDA 대시보드"
+author: "kwangchun lee"
+lang: ko
+format:
+  dashboard:
+    theme: cosmo
+    orientation: rows
+    scrolling: false
+    embed-resources: true
+execute:
+  echo: false
+---
+
+```{r setup}
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+
+# 한글 폰트 (Windows 맑은 고딕)
+try(windowsFonts(malgun = windowsFont("Malgun Gothic")), silent = TRUE)
+
+gini <- function(x) {
+  x <- sort(x[!is.na(x) & x >= 0]); n <- length(x)
+  if (n == 0) return(NA)
+  2 * sum(x * seq_len(n)) / (n * sum(x)) - (n + 1) / n
+}
+cv <- function(x) sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE)
+
+df <- read.csv("data/gapminder.csv", stringsAsFactors = FALSE)
+first <- min(df$year); latest <- max(df$year)
+
+mytheme <- theme_minimal(base_size = 13) +
+  theme(text = element_text(family = "malgun"),
+        plot.title = element_text(face = "bold"),
+        legend.position = "right")
+
+# 전세계 추세 (단순평균=비가중, 인구가중)
+world_trend <- df %>% group_by(year) %>%
+  summarise(`비가중` = mean(lifeExp),
+            `인구가중` = sum(lifeExp * pop) / sum(pop),
+            pop_t = sum(pop), .groups = "drop")
+
+# 핵심 지표
+life_world <- world_trend$`인구가중`[world_trend$year == latest]
+le_gain    <- world_trend$`인구가중`[world_trend$year == latest] -
+              world_trend$`인구가중`[world_trend$year == first]
+d_latest   <- df %>% filter(year == latest)
+life_range <- max(d_latest$lifeExp) - min(d_latest$lifeExp)  # 최장수-최단명 격차
+```
+
+# 핵심 지표
+
+## Row {height="22%"}
+
+```{r}
+#| content: valuebox
+#| title: "전세계 기대수명 2007 (1인 기준, 인구가중)"
+list(icon = "heart-pulse", color = "success",
+     value = sprintf("%.1f세", life_world))
+```
+
+```{r}
+#| content: valuebox
+#| title: "지난 55년간 기대수명 증가 (1952→2007)"
+list(icon = "graph-up-arrow", color = "primary",
+     value = sprintf("+%.1f년", le_gain))
+```
+
+```{r}
+#| content: valuebox
+#| title: "최장수-최단명 국가 격차 (2007)"
+list(icon = "rulers", color = "#e83e8c",
+     value = sprintf("%.0f년", life_range))
+```
+
+## Row {height="78%"}
+
+### Column {width="58%"}
+
+```{r}
+#| title: "전세계 기대수명 추세 (가중 vs 비가중)"
+world_trend %>%
+  select(year, `비가중`, `인구가중`) %>%
+  pivot_longer(-year, names_to = "유형", values_to = "기대수명") %>%
+  ggplot(aes(year, `기대수명`, color = `유형`)) +
+  geom_line(linewidth = 1.1) + geom_point(size = 1.8) +
+  scale_color_manual(values = c("비가중" = "#d6604d", "인구가중" = "#4dacd6")) +
+  labs(x = NULL, y = "기대수명") + mytheme
+```
+
+### Column {width="42%"}
+
+```{r}
+#| title: "국가 간 격차(CV) — 수렴은 단조롭지 않다"
+df %>% group_by(year) %>%
+  summarise(SD = round(sd(lifeExp), 2),
+            CV = round(cv(lifeExp), 3),
+            IQR = round(IQR(lifeExp), 2), .groups = "drop") %>%
+  rename(연도 = year) %>%
+  knitr::kable()
+```
+
+::: {.card title="노트"}
+CV는 0.249(1952)→0.18(2007)로 전반 수렴이나 1987 최저 후 1987–2002 재확대.
+:::
+
+# 가중 vs 비가중
+
+## Row
+
+### Column {width="55%"}
+
+```{r}
+#| title: "대륙별 평균 기대수명 추세"
+df %>% group_by(year, continent) %>%
+  summarise(기대수명 = mean(lifeExp), .groups = "drop") %>%
+  ggplot(aes(year, `기대수명`, color = continent)) +
+  geom_line(linewidth = 1.1) + geom_point(size = 1.5) +
+  labs(x = NULL, y = "기대수명", color = "대륙") + mytheme
+```
+
+### Column {width="45%"}
+
+```{r}
+#| title: "단순평균 vs 인구가중 평균 격차 (연도별)"
+world_trend %>%
+  mutate(격차 = `인구가중` - `비가중`) %>%
+  ggplot(aes(year, `격차`)) +
+  geom_col(fill = "#4dacd6", alpha = 0.85) +
+  labs(x = NULL, y = "인구가중 − 비가중 (세)") + mytheme
+```
+
+```{r}
+#| title: "대륙별 기대수명 분포 (2007)"
+ggplot(d_latest, aes(reorder(continent, lifeExp, median), lifeExp, fill = continent)) +
+  geom_boxplot(alpha = 0.85, show.legend = FALSE) +
+  geom_jitter(width = 0.15, alpha = 0.4, size = 1) +
+  coord_flip() +
+  labs(x = NULL, y = "기대수명") + mytheme
+```
+
+# 소득 ↔ 수명
+
+## Row
+
+### Column {width="50%"}
+
+```{r}
+#| title: "1인당 GDP vs 기대수명 (2007, 버블=인구)"
+ggplot(d_latest, aes(gdpPercap, lifeExp, size = pop, color = continent)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(aes(group = 1), method = "lm", se = FALSE,
+              color = "black", linewidth = 0.6) +
+  scale_x_log10(labels = label_dollar()) +
+  scale_size(range = c(1.5, 14), guide = "none") +
+  labs(x = "1인당 GDP (로그)", y = "기대수명", color = "대륙") +
+  mytheme + theme(legend.position = "bottom")
+```
+
+### Column {width="50%"}
+
+```{r}
+#| title: "관계의 시간 변화 (1952 · 1977 · 2007)"
+df %>% filter(year %in% c(1952, 1977, 2007)) %>%
+  ggplot(aes(gdpPercap, lifeExp, color = continent)) +
+  geom_point(alpha = 0.6, size = 1.2) +
+  scale_x_log10(labels = label_dollar()) +
+  facet_wrap(~year) +
+  labs(x = "1인당 GDP (로그)", y = "기대수명", color = "대륙") +
+  mytheme + theme(legend.position = "bottom")
+```
+
+```{r}
+#| title: "β-수렴 — 출발선 낮은 국가가 더 따라잡음"
+wide <- df %>% filter(year %in% c(first, latest)) %>%
+  select(country, continent, year, lifeExp) %>%
+  pivot_wider(names_from = year, values_from = lifeExp)
+le0 <- paste0(first); le1 <- paste0(latest)
+wide$gain <- wide[[le1]] - wide[[le0]]
+beta <- cor(wide[[le0]], wide$gain)
+ggplot(wide, aes(.data[[le0]], gain, color = continent)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.6) +
+  labs(title = sprintf("상관 r = %.3f (음수 → 수렴)", beta),
+       x = sprintf("%s년 기대수명", first),
+       y = sprintf("%s년까지 증가량", latest), color = "대륙") +
+  mytheme + theme(legend.position = "bottom")
+```
